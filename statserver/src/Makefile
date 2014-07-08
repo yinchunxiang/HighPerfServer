@@ -22,4 +22,6 @@ statserver: statserver.c akg.c conf.c collect.c md5.c base64.cc \
 			${JEEP_HOME}/jeep.c ${JEEP_HOME}/jeep_log.c ${JEEP_HOME}/jeep_util.c \
 			-I/usr/local/include/ -I/usr/include/mysql -I${JEEP_HOME} -I${HIREDIS_INCLUDE} -I${JSON_INCLUDE} \
 			-L/lib -L/usr/local/lib/ -L/usr/lib64/mysql/ -L${HIREDIS_LIB} -L${JSON_LIB} \
-			-lpthread -levent -lmysqlclient -ldl -lhiredis ${PROJECT_HOME}/libs/jsoncpp/libjson_linux-gcc-4.1.2_libmt.a
+			-lpthread -levent -lmysqlclient -ldl \
+			${PROJECT_HOME}/libs/hiredis/libhiredis.a \
+			${PROJECT_HOME}/libs/jsoncpp/libjson_linux-gcc-4.1.2_libmt.a

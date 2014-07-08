@@ -6,8 +6,8 @@
 #include "akg.h"
 #include "ptcl.h"
 #include "collect.h"
-#include <hiredis/hiredis.h>
-#include <json/json.h>
+#include "hiredis.h"
+#include "json/json.h"
 #include "base64.h"
 #include "md5.h"
 #include "conf.h"
