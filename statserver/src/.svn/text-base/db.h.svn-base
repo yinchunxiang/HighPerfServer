@@ -1,0 +1,39 @@
+/*
+ * db.h
+ *	
+ *  功能：取db任务，执行mysql操作
+ *  
+ *  Created on: 2011-11-7
+ *      Author: fengjianhua
+ *        Mail: jianhuafeng@sohu-inc.com 56683216@qq.com
+ *
+ *  修改记录：
+ */
+
+#ifndef STATS_DB_H_
+#define STATS_DB_H_
+
+#include "mysql.h"
+
+#define MAX_SQL_LEN (1024)
+#define DBJOB_ROW_SIZE (131072)
+
+typedef struct _DBJOB_QUEUE {
+	uint32 size;
+	uint32 producer;
+	uint32 consumer;
+	char items[DBJOB_ROW_SIZE][MAX_SQL_LEN];
+} DBJOB_QUEUE;
+
+extern DBJOB_QUEUE *dbjobs;
+
+/**
+ * 初始化全局数据库任务队列
+ */
+sint32 init_dbjobs();
+
+sint32 start_db_thread();
+
+sint32 connect_mysql(MYSQL **mysql);
+
+#endif /* STATS_DB_H_ */

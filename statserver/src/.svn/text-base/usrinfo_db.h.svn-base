@@ -1,0 +1,40 @@
+/*
+ * usrinfo_db.h
+ *	
+ *  功能：取插入或更新usrinfo的db任务，执行mysql操作
+ *  
+ *  Created on: 2011-11-8
+ *      Author: fengjianhua
+ *        Mail: jianhuafeng@sohu-inc.com 56683216@qq.com
+ *
+ *  修改记录：
+ */
+
+#ifndef STATS_USRINFO_DB_H_
+#define STATS_USRINFO_DB_H_
+
+#include "db.h"
+
+typedef struct _USER {
+	uint32 uid;
+	uint32 cliver;
+	uint16 chid;
+} USER;
+
+typedef struct _USRINFO_DBJOB_QUEUE {
+	uint32 size;
+	uint32 producer;
+	uint32 consumer;
+	USER items[DBJOB_ROW_SIZE];
+} USRINFO_DBJOB_QUEUE;
+
+extern USRINFO_DBJOB_QUEUE *usrinfo_dbjobs;
+
+/**
+ * 初始化全局数据库任务队列
+ */
+sint32 init_usrinfo_dbjobs();
+
+sint32 start_usrinfo_db_thread();
+
+#endif /* STATS_USRINFO_DB_H_ */

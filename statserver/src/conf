@@ -1,0 +1,8 @@
+#--------constant------------
+PORT			8088
+WORKERNUM		12
+CONNNUM			50000
+TIMEOUT			360
+#--------reloadable-----------
+MAXINCHID		1016
+MAXOUTCHID	 	2016

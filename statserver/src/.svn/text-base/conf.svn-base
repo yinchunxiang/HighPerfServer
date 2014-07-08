@@ -1,0 +1,13 @@
+#--------constant------------
+PORT			8088
+WORKERNUM		12
+CONNNUM			131072
+DBIP			10.10.82.150
+DBPORT	 		3307
+DBNAME			pstest
+DBUSR			P2pStatus
+DBPASS			P2pReport
+TIMEOUT			360
+#--------reloadable-----------
+MAXINCHID		1016
+MAXOUTCHID	 	2016

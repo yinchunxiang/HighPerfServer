@@ -1,0 +1,87 @@
+/*
+ * usrinfo_db.c
+ *	
+ *  Created on: 2011-11-8
+ *      Author: fengjianhua
+ *        Mail: jianhuafeng@sohu-inc.com 56683216@qq.com
+ *
+ *  ÐÞ¸Ä¼ÇÂ¼£º
+ */
+
+#include "../jeep/jeep.h"
+#include "conf.h"
+#include "usrinfo_db.h"
+
+USRINFO_DBJOB_QUEUE *usrinfo_dbjobs = NULL;
+
+static LOG_QUEUE *log = NULL;
+
+sint32 init_usrinfo_dbjobs() {
+	log = create_log_queue();
+	if (log == NULL) {
+		fprintf(stderr, "init_usrinfo_dbjobs log error! errno: %d %m\n", errno);
+		return -1;
+	}
+	usrinfo_dbjobs = (USRINFO_DBJOB_QUEUE *) malloc(sizeof(USRINFO_DBJOB_QUEUE) * conf->workernum);
+	if (usrinfo_dbjobs == NULL) {
+		fprintf(stderr, "init_usrinfo_dbjobs malloc error! errno: %d %m\n", errno);
+		return -1;
+	}
+	memset(usrinfo_dbjobs, 0, sizeof(USRINFO_DBJOB_QUEUE) * conf->workernum);
+	for (int i = 0; i < conf->workernum; i++)
+		usrinfo_dbjobs[i].size = DBJOB_ROW_SIZE;
+
+	return 0;
+}
+
+static void *db_worker_fun(void *arg) {
+	MYSQL *mysql = NULL;
+	if (connect_mysql(&mysql) == 0) {
+		slog_info_t(log, "usrinfo mysql connect ok");
+	} else {
+		slog_err_t(log, "usrinfo mysql connect error, thread exit");
+		return NULL;
+	}
+	static char sql_str[256];
+	time_t timesec;
+	static struct tm *timestr;
+	static char datetime[50];
+	while (1) {
+		int s = 0;
+		for (int i = 0; i < conf->workernum; i++) {
+			USER *user = GET_CONSUMER(usrinfo_dbjobs + i);
+			if (user == NULL) {
+				++s;
+				continue;
+			}
+			timesec = time(NULL);
+			timestr = localtime(&timesec);
+			memset(datetime, 0, sizeof(datetime));
+			strftime(datetime, 50, "%Y-%m-%d %H:%M:%S", timestr);
+
+			int ind = get_ver_ind(user->cliver, ver->vernum - 1);
+			sprintf(sql_str, "update b_user_info set o_time=\'%s\', version=\'%s\', channel=%u where id=%u", datetime,
+					ver->strver[ind], user->chid, user->uid);
+			mysql_query(mysql, sql_str);
+			if (mysql_affected_rows(mysql) < 1) {
+				sprintf(sql_str, "insert into b_user_info(id, version, channel, c_time) values(%u, \'%s\', %u, \'%s\')",
+						user->uid, ver->strver[ind], user->chid, datetime);
+				if (mysql_query(mysql, sql_str) != 0) {
+					slog_err_t(log, "usrinfo error, %s; [%s]", sql_str, mysql_error(mysql));
+					sleep(1);
+					if (connect_mysql(&mysql) != 0)
+						slog_err_t(log, "usrinfo mysql connect error");
+				}
+			}
+			PUT_CONSUMER(usrinfo_dbjobs + i);
+		}
+		if (s == conf->workernum)
+			nsleep(10);
+	}
+	return NULL;
+}
+
+sint32 start_usrinfo_db_thread() {
+	pthread_t thread_id;
+	return pthread_create(&thread_id, NULL, db_worker_fun, NULL);
+}

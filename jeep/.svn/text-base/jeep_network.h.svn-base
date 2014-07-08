@@ -1,0 +1,67 @@
+/*
+ * JEEP: Johan Efficient Event Platform
+ *
+ * jeep_network.h
+ *	
+ *  名称：网络处理模块（公共模块）
+ *	功能：管理连接，网络读写，任务分发
+ *  
+ *  Created on: 2011-9-30
+ *      Author: feng jianhua (johan fong)
+ *        Mail: jianhuafeng@sohu-inc.com 56683216@qq.com
+ *
+ *  修改记录：
+ */
+
+#ifndef JEEP_NETWORK_H_
+#define JEEP_NETWORK_H_
+
+#include <stdio.h>
+#include <pthread.h>
+#include <unistd.h>
+#include <sys/types.h>
+#include <fcntl.h>
+#include <sys/socket.h>
+#include <sys/ioctl.h>
+#include <netinet/in.h>
+#include <arpa/inet.h>
+#include <errno.h>
+#include "jeep_type.h"
+#include "jeep_conn.h"
+#include "jeep_log.h"
+
+#define CONN_READ_TIMEOUT (300)
+#define CONN_WRITE_TIMEOUT (300)
+
+struct _WORKER {
+	pthread_t thread_id;
+	uint16 ind;
+	int sfd;
+	struct event_base *base;
+	CONN_LIST *conns;
+	struct event notify_event;
+	int notified_rfd;
+	int notifed_wfd;
+	LOG_QUEUE *qlog;
+};
+
+typedef struct _WORKER_ARRAY {
+	uint16 size;
+	WORKER array[0];
+} WORKER_ARRAY;
+
+typedef struct _SERVER {
+	int server_fd;
+	int port;
+	struct event_base *base;
+	struct event listen_event;
+	WORKER_ARRAY *workers;
+	LOG_QUEUE *qlog;
+} SERVER;
+
+SERVER* init_server(int port, uint16 workernum, uint32 connnum, int read_timeout, int write_timeout);
+WORKER_ARRAY* init_workers(uint16 workernum, uint32 connnum, int read_timeout, int write_timeout);
+int start_server(SERVER* server);
+int start_workers(WORKER_ARRAY* workers);
+
+#endif /* JEEP_NETWORK_H_ */

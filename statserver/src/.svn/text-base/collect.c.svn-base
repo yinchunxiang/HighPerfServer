@@ -1,0 +1,333 @@
+/*
+ * collcet.c
+ *	
+ *  Created on: 2011-11-7
+ *      Author: fengjianhua
+ *        Mail: jianhuafeng@sohu-inc.com 56683216@qq.com
+ *
+ *  修改记录：
+ */
+
+#include "../jeep/jeep.h"
+#include "collect.h"
+#include "db.h"
+
+#define COLLECT_MINUTE		    (60)
+#define COLLECT_30MINUTE			(1800)
+#define COLLECT_60MINUTE			(3600)
+
+REPORT *report = NULL;
+
+int ind_collect_1 = 0;
+int ind_collect_30 = 0;
+int ind_collect_60 = 0;
+
+static LOG_QUEUE *log = NULL;
+
+sint32 init_report() {
+	log = create_log_queue();
+	if (log == NULL) {
+		fprintf(stderr, "init_report log error! errno: %d %m\n", errno);
+		return -1;
+	}
+	report = (REPORT *) malloc(sizeof(REPORT) * conf->workernum);
+	if (report == NULL) {
+		fprintf(stderr, "init_report error!\n");
+		return -1;
+	}
+	memset(report, 0, sizeof(REPORT) * conf->workernum);
+	return 0;
+}
+
+/*
+ 输入:当前时间
+ 输出:无
+ 功能:对在线量做汇总
+ */
+static void online_collect(const char *datetime, int ind) {
+	uint16 ch;
+	uint32 sum;
+	uint32 num_logout = 0;
+	char *sql_str;
+	for (int j = 0; j < ver->vernum; j++) {
+		for (ch = CHNLID_INNER_STARTID; ch <= conf->maxinchid; ch++) {
+			sum = 0;
+			num_logout = 0;
+			for (int i = 0; i < conf->workernum; i++) {
+				sum += report[i].online[j][ch];
+				num_logout += report[i].logout[j][ch][ind];
+				report[i].logout[j][ch][ind] = 0;
+			}
+			
+			if (sum > 0 || num_logout > 0) {
+				sql_str = GET_PRODUCER_STRITEM(dbjobs);
+				if (sql_str == NULL) {
+					slog_err_t(log, "error, sqllist overload, p:%lu, c:%lu", dbjobs->producer, dbjobs->consumer);
+				} else {
+					sprintf(
+						sql_str,
+						"insert into b_online(online_num, logout_num, client_version, channel, c_time) values(%u, %u, \'%s\', %u, \'%s\')",
+					 	sum, num_logout, ver->strver[j], ch, datetime
+					);
+					PUT_PRODUCER_STRITEM(dbjobs);
+				}
+			}
+		}
+		for (ch = CHNLID_OUTER_STARTID; ch <= conf->maxoutchid; ch++) {
+			sum = 0;
+			num_logout = 0;
+			for (int i = 0; i < conf->workernum; i++) {
+				sum += report[i].online[j][ch];
+				num_logout += report[i].logout[j][ch][ind];
+				report[i].logout[j][ch][ind] = 0;
+			}
+
+			if (sum > 0 || num_logout > 0) {
+				sql_str = GET_PRODUCER_STRITEM(dbjobs);
+				if (sql_str == NULL) {
+					slog_err_t(log, "error, sqllist overload, p:%lu, c:%lu", dbjobs->producer, dbjobs->consumer);
+				} else {
+					sprintf(
+						sql_str,
+						"insert into b_online(online_num, logout_num, client_version, channel, c_time) values(%u, %u, \'%s\', %u, \'%s\')",
+					 	sum, num_logout, ver->strver[j], ch, datetime
+					);
+					PUT_PRODUCER_STRITEM(dbjobs);
+				}
+			}
+		}
+	}
+}
+
+/*
+ 输入:当前时间，要采集的数据的下标（0或1）
+ 输出:无
+ 功能:对速度做汇总
+ */
+void speed_collect(const char *datetime, int ind) {
+	uint64 avgspeed;
+	uint32 avgspeed_count;
+	uint64 cdnspeed;
+	uint64 p2pspeed;
+	uint32 speed_count;
+	for (int j = 0; j < ver->vernum; j++) {
+		avgspeed = 0;
+		avgspeed_count = 0;
+		cdnspeed = 0;
+		p2pspeed = 0;
+		speed_count = 0;
+		for (int i = 0; i < conf->workernum; i++) {
+			avgspeed += report[i].avgspeed[j][ind];
+			avgspeed_count += report[i].avgspeedcount[j][ind];
+			cdnspeed += report[i].cdnspeed[j][ind];
+			p2pspeed += report[i].p2pspeed[j][ind];
+			speed_count += report[i].speed_count[j][ind];
+			report[i].avgspeed[j][ind] = 0;
+			report[i].avgspeedcount[j][ind] = 0;
+			report[i].cdnspeed[j][ind] = 0;
+			report[i].p2pspeed[j][ind] = 0;
+			report[i].speed_count[j][ind] = 0;
+		}
+		if (0 == avgspeed || 0 == avgspeed_count)
+			continue;
+
+		char *sql_str = GET_PRODUCER_STRITEM(dbjobs);
+		if (sql_str == NULL) {
+			slog_err_t(log, "error, sqllist overload, p:%lu, c:%lu",
+					dbjobs->producer % dbjobs->size,dbjobs->consumer % dbjobs->size);
+			continue;
+		} else {
+			if (0 == (cdnspeed + p2pspeed) || 0 == speed_count) {
+				sprintf(sql_str, "insert into b_download_speed(speed_avg, client_version, c_time) values(%ld, \'%s\', \'%s\')",
+						avgspeed / avgspeed_count, ver->strver[j], datetime);
+			} else {
+				//插入数据库的单位是kbps
+				sprintf(
+						sql_str,
+						"insert into b_download_speed(speed_avg, cdn_speed_avg, p2p_speed_avg, client_version, c_time) values(%ld, %ld, %ld, \'%s\', \'%s\')",
+						avgspeed / avgspeed_count + 1, cdnspeed / speed_count, p2pspeed / speed_count + 1, ver->strver[j], datetime);
+			}
+			PUT_PRODUCER_STRITEM(dbjobs);
+		}
+	}
+}
+
+/*
+ 输入:当前时间，要采集的数据的下标（0或1）
+ 输出:无
+ 功能:对下载字节数做汇总（统计带宽节省信息）
+ */
+void bandwith_collect(const char *datetime, int ind) {
+	uint32 p2pbyte;
+	uint32 cdnbyte;
+	for (int j = 0; j < ver->vernum; j++) {
+		p2pbyte = 0;
+		cdnbyte = 0;
+		for (int i = 0; i < conf->workernum; i++) {
+			//插入数据库的单位是MBps,很多数的小数大于5都被截掉了，所以加1
+			p2pbyte += (report[i].p2pbyte[j][ind] / 1000000 + 1);
+			cdnbyte += (report[i].cdnbyte[j][ind] / 1000000);
+			report[i].p2pbyte[j][ind] = 0;
+			report[i].cdnbyte[j][ind] = 0;
+		}
+		if ((conf->workernum == p2pbyte) && (0 == cdnbyte))
+			continue;
+
+		char *sql_str = GET_PRODUCER_STRITEM(dbjobs);
+		if (sql_str == NULL) {
+			slog_err_t(log, "error, sqllist overload, p:%lu, c:%lu",
+					dbjobs->producer % dbjobs->size,dbjobs->consumer % dbjobs->size);
+			continue;
+		} else {
+			sprintf(
+					sql_str,
+					"insert into b_bandwith(p2p_downloadByte, cdn_downloadByte, client_version, download_time) values(%d, %d, \'%s\', \'%s\')",
+					p2pbyte, cdnbyte, ver->strver[j], datetime);
+			PUT_PRODUCER_STRITEM(dbjobs);
+		}
+	}
+}
+/*
+ 输入:当前时间，要采集的数据的下标（0或1）
+ 输出:无
+ 功能:对peer连接状况做汇总
+ */
+void natconn_collect(const char *datetime, int ind) {
+	uint32 success;
+	uint32 failed;
+	for (int j = 0; j < ver->vernum; j++) {
+		for (int k = 0; k < NAT_TYPE_NUM; k++) {
+			success = 0;
+			failed = 0;
+			for (int i = 0; i < conf->workernum; i++) {
+				success += report[i].natsuccess[j][k][ind];
+				failed += report[i].natfailed[j][k][ind];
+				report[i].natsuccess[j][k][ind] = 0;
+				report[i].natfailed[j][k][ind] = 0;
+			}
+			if ((0 == success) && (0 == failed))
+				continue;
+
+			char *sql_str = GET_PRODUCER_STRITEM(dbjobs);
+			if (sql_str == NULL) {
+				slog_err_t(log, "error, sqllist overload, p:%lu, c:%lu",
+						dbjobs->producer % dbjobs->size,dbjobs->consumer % dbjobs->size);
+				continue;
+			} else {
+				sprintf(
+						sql_str,
+						"insert into b_p2pconn(nat_type, conn_success_num, conn_fail_num, client_version, conn_insert_time) values(%d, %d, %d, \'%s\', \'%s\')",
+						k, success, failed, ver->strver[j], datetime);
+				PUT_PRODUCER_STRITEM(dbjobs);
+			}
+		}
+	}
+}
+/*
+ 输入:当前时间
+ 输出:无
+ 功能:对速度区间做汇总
+ */
+void speed_range_collect(const char *datetime) {
+	int ind = ind_collect_30;
+	ind_collect_30 = (ind_collect_30 + 1) % 2;
+
+	sint32 speedrange[4];
+	for (int j = 0; j < ver->vernum; j++) {
+		speedrange[0] = 0;
+		speedrange[1] = 0;
+		speedrange[2] = 0;
+		speedrange[3] = 0;
+		for (int i = 0; i < conf->workernum; i++) {
+			speedrange[0] += report[i].speedlt240[j][ind];
+			speedrange[1] += report[i].speed240_640[j][ind];
+			speedrange[2] += report[i].speed640_800[j][ind];
+			speedrange[3] += report[i].speedge800[j][ind];
+			report[i].speedlt240[j][ind] = 0;
+			report[i].speed240_640[j][ind] = 0;
+			report[i].speed640_800[j][ind] = 0;
+			report[i].speedge800[j][ind] = 0;
+		}
+		if (0 == (speedrange[0] + speedrange[1] + speedrange[2] + speedrange[3]))
+			continue;
+
+		char *sql_str = GET_PRODUCER_STRITEM(dbjobs);
+		if (sql_str == NULL) {
+			slog_err_t(log, "error, sqllist overload, p:%lu, c:%lu",
+					dbjobs->producer % dbjobs->size,dbjobs->consumer % dbjobs->size);
+			continue;
+		} else {
+			sprintf(sql_str, "insert into b_speed_num(c_version,s1,s2,s3,s4,c_time) values(\'%s\',%d,%d,%d,%d,\'%s\')",
+					ver->strver[j], speedrange[0], speedrange[1], speedrange[2], speedrange[3], datetime);
+			PUT_PRODUCER_STRITEM(dbjobs);
+		}
+	}
+}
+
+/*
+ 输入:当前时间
+ 输出:无
+ 功能:对启动类型做汇总
+ */
+void starttype_collect(const char *datetime) {
+	int ind = ind_collect_60;
+	ind_collect_60 = (ind_collect_60 + 1) % 2;
+
+	uint32 starttypenum[NUM_START_TYPE] = {0};
+	for (int i = 0; i < conf->workernum; i++) {
+		for	(int j=0; j < NUM_START_TYPE; j++) {
+			starttypenum[j] += report[i].starttype[j][ind];
+			report[i].starttype[j][ind] = 0;
+		}
+	}
+	uint32 sum_start_type_num = 0;
+	for	(int i=0; i < NUM_START_TYPE; i++) {
+		sum_start_type_num += starttypenum[i];
+	}
+	if (0 == sum_start_type_num)
+		return;
+
+	char *sql_str = GET_PRODUCER_STRITEM(dbjobs);
+	if (sql_str == NULL) {
+		slog_err_t(log, "error, sqllist overload, p:%lu, c:%lu",
+				dbjobs->producer % dbjobs->size,dbjobs->consumer % dbjobs->size);
+	} else {
+		sprintf(sql_str, "insert into c_start_type(type1, type2, type3, type4, type5, c_time) values(%d,%d,%d,%d,%d,\'%s\')", starttypenum[0], starttypenum[1], starttypenum[2], starttypenum[3], starttypenum[4], datetime);
+		PUT_PRODUCER_STRITEM(dbjobs);
+	}
+}
+
+static void *collect_worker_fun(void *arg) {
+	static int64_t timecount = 0;
+	time_t timesec;
+	static struct tm *timestr;
+	static char datetime[50];
+	while (1) {
+		susleep(1, 0);
+		if ((++timecount) % COLLECT_MINUTE == 0) {
+			timesec = time(NULL);
+			timestr = localtime(&timesec);
+			memset(datetime, 0, sizeof(datetime));
+			strftime(datetime, 50, "%Y-%m-%d %H:%M:%S", timestr);
+
+
+			int ind = ind_collect_1;
+			ind_collect_1 = (ind_collect_1 + 1) % 2;
+			online_collect(datetime,ind);
+			speed_collect(datetime, ind);
+			bandwith_collect(datetime, ind);
+			natconn_collect(datetime, ind);
+
+			if (timecount % COLLECT_30MINUTE == 0)
+				speed_range_collect(datetime);
+			if (timecount % COLLECT_60MINUTE == 0)
+				starttype_collect(datetime);
+		}
+	}
+	return NULL;
+}
+
+sint32 start_collect_thread() {
+	pthread_t thread_id;
+	return pthread_create(&thread_id, NULL, collect_worker_fun, NULL);
+}

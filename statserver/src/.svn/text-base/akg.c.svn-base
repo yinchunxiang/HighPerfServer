@@ -1,0 +1,212 @@
+/*
+ * akg.c
+ *	
+ *  Created on: 2011-11-3
+ *      Author: fengjianhua
+ *        Mail: jianhuafeng@sohu-inc.com 56683216@qq.com
+ *
+ *  修改记录：
+ *  20111121:
+ *  	不做login判断（线上统计，约每30分钟30万数据中，只有100多个uid或ver无效的数据）
+ */
+
+#include "akg.h"
+#include "ptcl.h"
+#include "collect.h"
+#include "usrinfo_db.h"
+
+sint32 logout(CONN* c) {
+	if (c->login) {
+		c->login = 0;
+		--report[c->owner->ind].online[c->verind_4online][c->chid];
+		++report[c->owner->ind].logout[c->verind_4online][c->chid][ind_collect_1];
+		slog_info_t(c->owner->qlog, "logout: %u err %u", c->uid, c->err_type);
+	}
+	return 0;
+}
+
+sint32 login(CONN* c) {
+	if (!c->login) {
+		HEAD *head = (HEAD*) c->in_buf;
+		if (head->pkglen == SIZE_OF_HEAD + sizeof(LOGIN)) {
+			LOGIN *login = (LOGIN *) (c->in_buf + SIZE_OF_HEAD);
+			c->login = 1;
+			c->cliver = login->cliver;
+			c->uid = login->uid;
+			c->lip = login->lip;
+			c->osver = login->osver;
+			c->osver2 = login->osver2;
+			c->updatever = login->updatever;
+			c->chid = CHNLID_INNER_STARTID;
+		} else if (head->pkglen == SIZE_OF_HEAD + sizeof(LOGIN2)) {
+			LOGIN2 *login = (LOGIN2 *) (c->in_buf + SIZE_OF_HEAD);
+			c->login = 1;
+			c->cliver = login->cliver;
+			c->uid = login->uid;
+			c->lip = login->lip;
+			c->osver = login->osver;
+			c->osver2 = login->osver2;
+			c->updatever = login->updatever;
+			c->nat = login->nat;
+			c->starttype = login->starttype;
+			c->chid = CHNLID_INNER_STARTID;
+			++report->starttype[c->starttype % NUM_START_TYPE][ind_collect_60];
+		} else if (head->pkglen == SIZE_OF_HEAD + sizeof(LOGIN3)) {
+			LOGIN3 *login = (LOGIN3 *) (c->in_buf + SIZE_OF_HEAD);
+			c->login = 1;
+			c->cliver = login->cliver;
+			c->uid = login->uid;
+			c->lip = login->lip;
+			c->osver = login->osver;
+			c->osver2 = login->osver2;
+			c->updatever = login->updatever;
+			c->nat = login->nat;
+			c->starttype = login->starttype;
+			if ((login->chid >= CHNLID_INNER_STARTID && login->chid <= conf->maxinchid) || (login->chid
+					>= CHNLID_OUTER_STARTID && login->chid <= conf->maxoutchid))
+				c->chid = login->chid;
+			else
+				c->chid = CHNLID_INNER_STARTID;
+			++report->starttype[c->starttype % NUM_START_TYPE][ind_collect_60];
+		} else {
+			slog_err_t_w(c->owner->qlog, "invalid login pkg");
+			close_err_conn(c);
+			return -1;
+		}
+		int verind = get_ver_ind(c->cliver, ver->vernum - 1);
+		++report[c->owner->ind].online[verind][c->chid];
+		c->verind_4online = verind;
+
+		USER* user = GET_PRODUCER(usrinfo_dbjobs + c->owner->ind);
+		if (user == NULL) {
+			slog_err_t(c->owner->qlog, "error, sqllist(usrinfo) overload, p:%lu, c:%lu",
+					usrinfo_dbjobs->producer,usrinfo_dbjobs->consumer);
+		} else {
+			user->uid = c->uid;
+			user->cliver = c->cliver;
+			user ->chid = c->chid;
+			PUT_PRODUCER(usrinfo_dbjobs + c->owner->ind);
+		}
+
+		slog_info_t(c->owner->qlog, "login: %u ver %u upver %u chid %u lip %u cip %u port %u nat %u os1 %u os2 %u start %u",
+				c->uid, c->cliver, c->updatever, c->chid, c->lip, c->cip, c->cport, c->nat, c->osver, c->osver2, c->starttype);
+	}
+
+	return 0;
+}
+
+sint32 old_heart_login(CONN* c) {
+	if (!c->login) {
+		OLD_HEART *heart = (OLD_HEART*) (c->in_buf + sizeof(OLD_HEAD));
+		c->login = 1;
+		c->cliver = heart->cliver;
+		c->uid = heart->uid;
+		c->lip = heart->lip;
+		int verind = get_ver_ind(c->cliver, ver->vernum - 1);
+		++report[c->owner->ind].online[verind][c->chid];
+		c->verind_4online = verind;
+		slog_info_t(c->owner->qlog, "old login: %u ver %u lip %u", c->uid, c->cliver, c->lip);
+	} else {
+		slog_info_t(c->owner->qlog, "old heart: %u ver %u", c->uid, c->cliver);
+	}
+
+	OLD_HEAD *in = (OLD_HEAD*) c->in_buf;
+	OLD_HEAD *out = (OLD_HEAD*) c->out_buf;
+	out->pkglen = 20;
+	out->akg_id = STATS_HEART_RSP_CMD;
+	out->stx = SOHU_P2P_STX;
+	out->randNum = in->randNum;
+	out->protocalVersion = in->protocalVersion;
+	*(uint32 *) (c->out_buf + 14) = c->cip;
+	*(uint16 *) (c->out_buf + 18) = 3404;
+	bufferevent_write(c->bufev, c->out_buf, out->pkglen);
+	return 0;
+}
+
+sint32 record_errinfo(CONN* c) {
+	ERRINFO *err = (ERRINFO *) (c->in_buf + SIZE_OF_HEAD);
+	char str[MAX_PKG_LEN];
+	snprintf(str, err->len + 1, "%s", err->info);
+	slog_err_t(c->owner->qlog, "errinfo: %u ver %u error[ %s ]", c->uid, c->cliver, str);
+	return 0;
+}
+
+sint32 old_speed(CONN* c) {
+	slog_info_t(c->owner->qlog, "old speed: %u ver %u", c->uid, c->cliver);
+	return 0;
+}
+
+sint32 heart(CONN* c) {
+	slog_info_t(c->owner->qlog, "heart: %u ver %u", c->uid, c->cliver);
+	return 0;
+}
+
+sint32 speed(CONN* c) {
+	SPEED *speed = (SPEED *) (c->in_buf + SIZE_OF_HEAD);
+	if (speed->speed == 0)
+		return -1;
+	slog_info_t(c->owner->qlog, "speed: %u ver %u speed %u", c->uid, c->cliver, speed->speed);
+	int ind = get_ver_ind(c->cliver, ver->vernum - 1);
+	REPORT *tr = &report[c->owner->ind];
+	tr->avgspeed[ind][ind_collect_1] += speed->speed;
+	++tr->avgspeedcount[ind][ind_collect_1];
+	if (speed->speed < 240) {
+		++tr->speedlt240[ind][ind_collect_30];
+	} else if (speed->speed < 640) {
+		++tr->speed240_640[ind][ind_collect_30];
+	} else if (speed->speed < 800) {
+		++tr->speed640_800[ind][ind_collect_30];
+	} else {
+		++tr->speedge800[ind][ind_collect_30];
+	}
+	return 0;
+}
+
+sint32 p2pinfo(CONN *c) {
+	P2PINFO *info = (P2PINFO *) (c->in_buf + SIZE_OF_HEAD);
+	int ind = get_ver_ind(c->cliver, ver->vernum - 1);
+	REPORT *tr = &report[c->owner->ind];
+	//对用户下载速度做统计
+	//客户端上报单位为kBps，客户端除以1024，因此服务器端数据*8*1024/1000，很多数的小数大于5都被截掉了，所以加1
+	//插入数据库的单位为kbps
+	if ((info->cdnspeed > 0 || info->p2pspeed) > 0) {
+		uint16 avgspeed = (info->cdnspeed + info->p2pspeed) * 8192 / 1000 + 1;
+		tr->avgspeed[ind][ind_collect_1] += avgspeed;
+		++tr->avgspeedcount[ind][ind_collect_1];
+
+		tr->cdnspeed[ind][ind_collect_1] += (info->cdnspeed * 8192 / 1000);
+		tr->p2pspeed[ind][ind_collect_1] += (info->p2pspeed * 8192 / 1000 + 1);
+		++tr->speed_count[ind][ind_collect_1];
+
+		if (avgspeed < 240) {
+			++tr->speedlt240[ind][ind_collect_30];
+		} else if (avgspeed < 640) {
+			++tr->speed240_640[ind][ind_collect_30];
+		} else if (avgspeed < 800) {
+			++tr->speed640_800[ind][ind_collect_30];
+		} else {
+			++tr->speedge800[ind][ind_collect_30];
+		}
+	}
+
+	//带宽情况累计客户端上报单位为B, 采样后单位换算为MB
+	tr->cdnbyte[ind][ind_collect_1] += info->cdnbyte;
+	tr->p2pbyte[ind][ind_collect_1] += info->p2pbyte;
+
+	//peer连接状况累计
+	uint16 succ = 0;
+	uint16 fail = 0;
+	for (int i = 0; i < info->itemnum; i++) {
+		succ += info->natconn[i].success;
+		fail += info->natconn[i].failed;
+		ubyte nat = info->natconn[i].nat;
+		if (nat <= NAT_TYPE_NUM) {
+			tr->natsuccess[ind][nat][ind_collect_1] += info->natconn[i].success;
+			tr->natfailed[ind][nat][ind_collect_1] += info->natconn[i].failed;
+		}
+	}
+
+	slog_info_t(c->owner->qlog, "p2pinfo: %u ver %u chid %u cdns %u p2ps %u cdnb %u p2pb %u succ %d fail %d",
+			c->uid, c->cliver, c->chid, info->cdnspeed, info->p2pspeed, info->cdnbyte, info->p2pbyte, succ, fail);
+	return 0;
+}

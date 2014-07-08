@@ -1,0 +1,297 @@
+/*
+ * conf.c
+ *	
+ *  Created on: 2011-11-3
+ *      Author: fengjianhua
+ *        Mail: jianhuafeng@sohu-inc.com 56683216@qq.com
+ *
+ *  修改记录：
+ *  	2011.12.03:
+ *  		reload版本，只能添加新版本，不能删除，最大支持版本32个；调整版本顺序为从小到大
+ */
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <errno.h>
+#include "conf.h"
+
+CONF *conf = NULL;
+VER *ver = NULL;
+static VER *ver_shadow = NULL;
+static char *conf_file;
+static char *ver_file;
+/*
+ 输入:配置目录
+ 功能:加载取配置文件
+ */
+sint32 init_conf(char *file) {
+	if (conf == NULL) {
+		conf = (CONF *) malloc(sizeof(CONF));
+		if (conf == NULL) {
+			fprintf(stderr, "init_conf error! cann't malloc conf\n");
+			return -1;
+		}
+	}
+	memset(conf, 0, sizeof(CONF));
+	conf->maxinchid = 1016;//默认内部渠道数最大为16
+	conf->maxoutchid = 2016;//默认外部渠道数最大为16
+	FILE * fp;
+	char line[1024];
+	char name[128];
+	char value[128];
+	fp = fopen(file, "r");
+	if (fp == NULL) {
+		fprintf(stderr, "init_conf error! fopen %s faild, errno: %d %m\n", file, errno);
+		return -1;
+	}
+	int len = strlen(file);
+	conf_file = (char *) malloc(sizeof(char) * len + 1);
+	sprintf(conf_file, "%s", file);
+	memset(line, 0, sizeof(line));
+	while (fgets(line, 1024, fp)) {
+		if (line[0] == '#' || strcmp(line, "") == 0) {
+			continue;
+		}
+		memset(name, 0, sizeof(name));
+		memset(value, 0, sizeof(value));
+		sscanf(line, "%s %s", name, value);
+		if (strcmp(name, "PORT") == 0) {
+			conf->port = atoi(value);
+		} else if (strcmp(name, "DBNAME") == 0) {
+			strcpy(conf->dbname, value);
+		} else if (strcmp(name, "DBIP") == 0) {
+			strcpy(conf->dbip, value);
+		} else if (strcmp(name, "DBPORT") == 0) {
+			conf->dbport = atoi(value);
+		} else if (strcmp(name, "DBPASS") == 0) {
+			strcpy(conf->dbpass, value);
+		} else if (strcmp(name, "DBUSR") == 0) {
+			strcpy(conf->dbusr, value);
+		} else if (strcmp(name, "TIMEOUT") == 0) {
+			conf->timeout = atoi(value);
+		} else if (strcmp(name, "WORKERNUM") == 0) {
+			conf->workernum = atoi(value);
+		} else if (strcmp(name, "CONNNUM") == 0) {
+			conf->connnum = atoi(value);
+		} else if (strcmp(name, "MAXINCHID") == 0) {
+			conf->maxinchid = atoi(value);
+		} else if (strcmp(name, "MAXOUTCHID") == 0) {
+			conf->maxoutchid = atoi(value);
+		}
+		memset(line, 0, sizeof(line));
+	}
+	//check conf
+	if (!conf->port || !conf->workernum || !conf->connnum) {
+		fprintf(stderr, "init_conf error! invalid config param\n");
+		fclose(fp);
+		return -1;
+	}
+	fprintf(stdout, "-----------------conf init-----------------\n");
+	fprintf(stdout, "port:       \t%d\n", conf->port);
+	fprintf(stdout, "dbip:       \t%s\n", conf->dbip);
+	fprintf(stdout, "dbport:     \t%d\n", conf->dbport);
+	fprintf(stdout, "dbusr:      \t%s\n", conf->dbusr);
+	fprintf(stdout, "dbpass:     \t%s\n", conf->dbpass);
+	fprintf(stdout, "dbname:     \t%s\n", conf->dbname);
+	fprintf(stdout, "timeout:    \t%d\n", conf->timeout);
+	fprintf(stdout, "workernum:  \t%d\n", conf->workernum);
+	fprintf(stdout, "connnum:    \t%d\n", conf->connnum);
+	fprintf(stdout, "maxinchid:  \t%d\n", conf->maxinchid);
+	fprintf(stdout, "maxoutchid: \t%d\n", conf->maxoutchid);
+	fflush(stdout);
+	fclose(fp);
+	return 0;
+}
+
+/*
+ 输入:版本配置目录
+ 功能:加载版本文件
+ */
+sint32 init_ver(char *file) {
+	ver = (VER *) malloc(sizeof(VER));
+	if (ver == NULL) {
+		fprintf(stderr, "init_ver error! cann't malloc ver\n");
+		return -1;
+	}
+	memset(ver, 0, sizeof(VER));
+	ver_shadow = (VER *) malloc(sizeof(VER));
+	if (ver_shadow == NULL) {
+		fprintf(stderr, "init_ver error! cann't malloc ver\n");
+		return -1;
+	}
+	FILE *fp;
+	sint32 vercount;
+	char verstr[64];
+	char verint[64];
+	char line[1024];
+	fp = fopen(file, "r");
+	if (NULL == fp) {
+		fprintf(stderr, "init_ver error! fopen %s faild, errno: %d %m\n", file, errno);
+		return -1;
+	}
+	int len = strlen(file);
+	ver_file = (char *) malloc(sizeof(char) * len);
+	sprintf(ver_file, "%s", file);
+	vercount = 0;
+	memset(line, 0, sizeof(line));
+	while (fgets(line, sizeof(line) - 1, fp)) {
+		if (line[0] == '#' || strcmp(line, "") == 0)
+			continue;
+		if (VER_MAX == vercount) {
+			fprintf(stderr, "init_ver error! vers beyond the borders\n");
+			ver->vernum = VER_MAX;
+			break;
+		}
+		sscanf(line, "%s %s", verstr, verint);
+		strcpy(ver->strver[vercount], verstr);
+		ver->intver[vercount] = atoi(verint);
+		vercount++;
+		memset(line, 0, sizeof(line));
+	}
+	ver->vernum = vercount;
+
+	sint32 i;
+	fprintf(stdout, "------------------ver init-----------------\n");
+	fprintf(stdout, "total:%d\n", vercount);
+	for (i = 0; i < vercount; i++) {
+		fprintf(stdout, "%02d    %s: %d\n", i, ver->strver[i], ver->intver[i]);
+	}
+	fflush(stdout);
+	fclose(fp);
+	return 0;
+}
+
+/**
+ * 二分法查找ver的下标
+ */
+static int search_ver(uint32 intver, int start, int end, int def) {
+	int midd;
+	while (1) {
+		if (start >= end) {
+			if (intver == ver->intver[start])
+				return start;
+			return def;
+		}
+		midd = (start + end) / 2;
+		if (intver == ver->intver[midd]) {
+			return midd;
+		} else if (intver < ver->intver[midd]) {
+			end = midd - 1;
+		} else {
+			start = midd + 1;
+		}
+	}
+}
+/**
+ * 得到版本号在全局ver中的下标
+ * 优化：直接比较最新版本号+其余二分查找
+ * 版本号没被认出来的默认为最新版
+ */
+inline int get_ver_ind(uint32 intver, int def) {
+	if (intver == ver->intver[ver->vernum - 1])
+		return ver->vernum - 1;
+	return search_ver(intver, 0, ver->vernum - 2, def);
+}
+
+/*
+ 输入:配置目录
+ 功能:重新加载配置文件
+ */
+static sint32 reload_conf() {
+	if (conf == NULL) {
+		fprintf(stderr, "reload_conf error! conf NULL\n");
+		return -1;
+	}
+	FILE * fp;
+	char line[1024];
+	char name[128];
+	char value[128];
+	fp = fopen(conf_file, "r");
+	if (fp == NULL) {
+		fprintf(stderr, "reload_conf error! fopen %s faild, errno: %d %m\n", conf_file, errno);
+		return -1;
+	}
+	memset(line, 0, sizeof(line));
+	while (fgets(line, 1024, fp)) {
+		if (line[0] == '#' || strcmp(line, "") == 0) {
+			continue;
+		}
+		memset(name, 0, sizeof(name));
+		memset(value, 0, sizeof(value));
+		sscanf(line, "%s %s", name, value);
+		if (strcmp(name, "MAXINCHID") == 0) {
+			conf->maxinchid = atoi(value);
+		} else if (strcmp(name, "MAXOUTCHID") == 0) {
+			conf->maxoutchid = atoi(value);
+		}
+		memset(line, 0, sizeof(line));
+	}
+	fprintf(stdout, "-----------------reload_conf-----------------\n");
+	fprintf(stdout, "maxinchid:  \t%d\n", conf->maxinchid);
+	fprintf(stdout, "maxoutchid: \t%d\n", conf->maxoutchid);
+	fflush(stdout);
+	fclose(fp);
+	return 0;
+}
+
+/*
+ 输入:版本配置目录
+ 功能:重新加载版本文件
+ */
+static sint32 reload_ver() {
+	if (ver_shadow == NULL) {
+		fprintf(stderr, "reload_ver error! cann't malloc ver\n");
+		return -1;
+	}
+	memset(ver_shadow, 0, sizeof(VER));
+	FILE *fp;
+	sint32 vercount;
+	char verstr[64];
+	char verint[64];
+	char line[1024];
+	fp = fopen(ver_file, "r");
+	if (NULL == fp) {
+		fprintf(stderr, "reload_ver error! fopen %s faild, errno: %d %m\n", ver_file, errno);
+		return -1;
+	}
+	vercount = 0;
+	memset(line, 0, sizeof(line));
+	while (fgets(line, sizeof(line) - 1, fp)) {
+		if (line[0] == '#' || strcmp(line, "") == 0)
+			continue;
+		if (VER_MAX == vercount) {
+			fprintf(stderr, "reload_ver error! vers beyond the borders\n");
+			ver_shadow->vernum = VER_MAX;
+			break;
+		}
+		sscanf(line, "%s %s", verstr, verint);
+		strcpy(ver_shadow->strver[vercount], verstr);
+		ver_shadow->intver[vercount] = atoi(verint);
+		vercount++;
+		memset(line, 0, sizeof(line));
+	}
+	ver_shadow->vernum = vercount;
+
+	sint32 i;
+	fprintf(stdout, "------------------reload_ver-----------------\n");
+	fprintf(stdout, "total:%d\n", vercount);
+	for (i = 0; i < vercount; i++) {
+		fprintf(stdout, "%02d    %s: %d\n", i, ver_shadow->strver[i], ver_shadow->intver[i]);
+	}
+	fflush(stdout);
+	fclose(fp);
+
+	VER *tmp = ver;
+	ver = ver_shadow;
+	ver_shadow = tmp;
+	return 0;
+}
+
+static void reload_conf_ver(int sig) {
+	reload_conf();
+	reload_ver();
+}
+
+void enable_reaload_confver() {
+	signal_handler(SIGUSR1, reload_conf_ver);
+}

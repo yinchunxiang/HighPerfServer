@@ -1,0 +1,74 @@
+/*
+ * statserver.c
+ *	
+ *  名称：统计服务器
+ *  功能：统计服务器代码主文件
+ *  
+ *  Created on: 2011-10-13
+ *      Author: fengjianhua
+ *        Mail: jianhuafeng@sohu-inc.com 56683216@qq.com
+ *
+ *  修改记录：
+ */
+#define _GNU_SOURCE
+#include <time.h>
+#include <sys/time.h>
+#include <pthread.h>
+#include "../jeep/jeep.h"
+#include "ptcl.h"
+#include "akg.h"
+#include "conf.h"
+#include "collect.h"
+#include "db.h"
+#include "usrinfo_db.h"
+
+int main(int argc, char *argv[]) {
+
+	daemonize();
+
+	if (init_conf("/opt/sohu/conf") < 0)
+		return -1;
+	if (init_ver("/opt/sohu/ver") < 0)
+		return -1;
+	enable_reaload_confver();
+
+	SERVER *server = init_server(conf->port, conf->workernum, conf->connnum, conf->timeout, conf->timeout);
+	if (server == NULL)
+		return -1;
+
+	regist_akg_func(CMD_STATS_LOGIN, login);
+	regist_disconnected_func(logout);
+	regist_akg_func(STATS_HEART_REQ_CMD, old_heart_login);
+	regist_akg_func(CMD_STATS_ERRINFO, record_errinfo);
+	regist_akg_func(STATS_SPEED_REQ_CMD, old_speed);
+	regist_akg_func(CMD_STATS_HEART_BEAT, heart);
+	regist_akg_func(CMD_STATS_SPEED, speed);
+	regist_akg_func(CMD_STATS_P2PINFO, p2pinfo);
+
+	if (init_report() < 0)
+		return -1;
+	if (init_dbjobs() < 0)
+		return -1;
+	if (init_usrinfo_dbjobs() < 0)
+		return -1;
+	if (start_log_thread() != 0) {
+		fprintf(stderr, "start_log_thread error, errno: %d %m\n", errno);
+		return -1;
+	}
+	if (start_db_thread() != 0) {
+		fprintf(stderr, "start_db_thread error, errno: %d %m\n", errno);
+		return -1;
+	}
+	if (start_usrinfo_db_thread() != 0) {
+		fprintf(stderr, "start_usrinfo_db_thread error, errno: %d %m\n", errno);
+		return -1;
+	}
+	if (start_collect_thread() != 0) {
+		fprintf(stderr, "start_collect_thread error, errno: %d %m\n", errno);
+		return -1;
+	}
+
+	start_server(server);
+
+	return 0;
+}

@@ -1,0 +1,102 @@
+/*
+ * db.c
+ *	
+ *  Created on: 2011-11-7
+ *      Author: fengjianhua
+ *        Mail: jianhuafeng@sohu-inc.com 56683216@qq.com
+ *
+ *  修改记录：
+ */
+
+#include "../jeep/jeep.h"
+#include "db.h"
+#include "conf.h"
+
+DBJOB_QUEUE *dbjobs = NULL;
+
+static LOG_QUEUE *log = NULL;//一个源文件中只有一个线程，且线程为持久线程，才可以这么使用
+
+sint32 init_dbjobs() {
+	log = create_log_queue();
+	if (log == NULL) {
+		fprintf(stderr, "init_dbjobs log error! errno: %d %m\n", errno);
+		return -1;
+	}
+	dbjobs = (DBJOB_QUEUE *) malloc(sizeof(DBJOB_QUEUE));
+	if (dbjobs == NULL) {
+		fprintf(stderr, "init_dbjobs malloc error! errno: %d %m\n", errno);
+		return -1;
+	}
+	memset(dbjobs, 0, sizeof(DBJOB_QUEUE));
+	dbjobs->size = DBJOB_ROW_SIZE;
+
+	return 0;
+}
+
+/*
+ 输入:mysql对象指针
+ 输出:成功与否
+ 功能:与mysql重连逻辑
+ */
+sint32 connect_mysql(MYSQL **mysql) {
+	if (*mysql == NULL) {
+		*mysql = (MYSQL *) malloc(sizeof(MYSQL));
+		if (*mysql == NULL) {
+			slog_err_t_w(log, "connect mysql malloc error");
+			return -1;
+		}
+	} else {
+		mysql_close(*mysql);
+	}
+
+	int ret = 0;
+	do {
+		if (mysql_init(*mysql) == NULL) {
+			slog_err_t_w(log, "mysql_init error, %s",mysql_error(*mysql));
+			sleep(2);
+			continue;
+		}
+		if (mysql_real_connect(*mysql, conf->dbip, conf->dbusr, conf->dbpass, conf->dbname, conf->dbport, NULL,
+				CLIENT_FOUND_ROWS) == NULL) {
+			slog_err_t_w(log, "mysql_real_connect error!, %s", mysql_error(*mysql));
+			mysql_close(*mysql);
+			sleep(2);
+			continue;
+		}
+		break;
+	} while (++ret < 5);
+	if (ret == 5)
+		return -1;
+
+	return 0;
+}
+
+static void *db_worker_fun(void *arg) {
+	MYSQL *mysql = NULL;
+	if (connect_mysql(&mysql) == 0) {
+		slog_info_t(log, "db mysql connect ok");
+	} else {
+		slog_err_t(log, "db mysql connect error, thread exit");
+		return NULL;
+	}
+	while (1) {
+		char *sql_str = GET_CONSUMER_STRITEM(dbjobs);
+		if (sql_str == NULL) {
+			nsleep(10);
+			continue;
+		}
+		if (mysql_query(mysql, sql_str) != 0) {
+			slog_err_t(log, "db error: %s; [%s]", sql_str, mysql_error(mysql));
+			sleep(1);
+			if (connect_mysql(&mysql) != 0)
+				slog_err_t(log, "db mysql connect error");
+		}
+		PUT_CONSUMER_STRITEM(dbjobs);
+	}
+	return NULL;
+}
+
+sint32 start_db_thread() {
+	pthread_t thread_id;
+	return pthread_create(&thread_id, NULL, db_worker_fun, NULL);
+}

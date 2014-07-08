@@ -1,0 +1,11 @@
+1、后台日志模块有待改进
+（1）日志模块使用基本方便，不过每个线程要持有自己的log_queue；
+（2）log_queue不能销毁（log_queues用链表也无法实现，因为后台write线程要安全访问log_queues），因此只能供持久线程使用。
+
+2、jeep_akg有待改进，以通用化
+（1）只保留：connected、timeout、closed、error、read_pkg
+（2）on_read要判断pkg的最大长和最小长度，符合要求再调用read_pkg，否则主动close
+（3）将AKG_FUNC放到应用系统中
+
+3、CONN
+为CONN添加了很多连接相关的信息及业务相关的信息（用户），通用化时待去掉

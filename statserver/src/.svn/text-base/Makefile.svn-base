@@ -1,0 +1,15 @@
+all: statserver
+
+clean:
+	rm -f statserver
+	
+statserver: statserver.c akg.c conf.c collect.c db.c usrinfo_db.c \
+			../jeep/jeep_akg.c ../jeep/jeep_conn.c ../jeep/jeep_network.c ../jeep/jeep.c ../jeep/jeep_log.c ../jeep/jeep_util.c ../jeep/jeep_table.h
+
+	gcc -g -std=c99 -O3 -Wall -fPIC -DLINUX64  -D__DEBUG__ \
+	-o statserver \
+	statserver.c akg.c conf.c collect.c db.c usrinfo_db.c \
+	../jeep/jeep_akg.c ../jeep/jeep_conn.c ../jeep/jeep_network.c ../jeep/jeep.c ../jeep/jeep_log.c ../jeep/jeep_util.c \
+	-I/opt/johan/lib/libevent_1.4s/include/ -I/usr/include/mysql \
+	-L/lib -L/opt/johan/lib/libevent_1.4s/lib/ -L/usr/lib64/mysql/ \
+	-lpthread -levent -lmysqlclient

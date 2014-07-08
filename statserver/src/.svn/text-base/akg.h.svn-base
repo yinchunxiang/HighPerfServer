@@ -1,0 +1,59 @@
+/*
+ * akg.h
+ *	
+ *  功能：长连接相关管理
+ *  
+ *  Created on: 2011-11-3
+ *      Author: fengjianhua
+ *        Mail: jianhuafeng@sohu-inc.com 56683216@qq.com
+ *
+ *  修改记录：
+ */
+
+#ifndef STATS_AKG_H_
+#define STATS_AKG_H_
+
+#include "../jeep/jeep.h"
+#include "conf.h"
+
+/**
+ * 登录
+ */
+sint32 login(CONN* c);
+
+/**
+ * 退出
+ */
+sint32 logout(CONN* c);
+
+/**
+ * 老版本登录及心跳
+ */
+sint32 old_heart_login(CONN* c);
+
+/**
+ * 记录客户端上报的错误信息
+ */
+sint32 record_errinfo(CONN* c);
+
+/**
+ * 老版本速度，兼容作用，不做任何处理
+ */
+sint32 old_speed(CONN* c);
+
+/**
+ * 心跳
+ */
+sint32 heart(CONN* c);
+
+/**
+ * 速度信息
+ */
+sint32 speed(CONN* c);
+
+/**
+ * 文件下载带宽信息,速度信息,peer连接信息等处理
+ */
+sint32 p2pinfo(CONN *c);
+
+#endif /* STATS_AKG_H_ */

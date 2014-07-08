@@ -1,0 +1,311 @@
+#include <iostream>
+#include <vector>
+#include <string>
+
+#include <unistd.h>
+#include <fcntl.h>
+#include <stdlib.h>
+#include <stdio.h>
+#include <sys/types.h>
+#include <sys/socket.h>
+#include <arpa/inet.h>
+#include <string.h>
+#include <errno.h>
+#include <fcntl.h>
+#include <pthread.h>
+#include <vector>
+#include <map>
+#include <sys/time.h>
+#include <sys/epoll.h>
+
+#include "ptcl.h"
+#include "mysql/mysql.h"
+
+using namespace std;
+
+const size_t NUM_THREAD = 16;
+const size_t MAX_PKG_LEN = 1500;
+
+vector<int> g_sock_vec;
+vector<size_t> g_login3_failed_vec(NUM_THREAD,0);
+size_t g_uid = 0;
+uint16 g_chid_arr[] = {0, 1000, 1010, 1016, 2000, 2010, 2016, 3000};
+
+
+pthread_mutex_t mutex = PTHREAD_MUTEX_INITIALIZER;
+pthread_mutex_t mutex2 = PTHREAD_MUTEX_INITIALIZER;
+pthread_mutex_t uid_mutex = PTHREAD_MUTEX_INITIALIZER;
+
+int create_socket()
+{
+	int sockfd = socket(AF_INET, SOCK_STREAM, 0);
+	if (-1 == sockfd) {
+		printf("create socket failed, errno %d\n", errno);
+		exit(1);
+	}
+
+	struct sockaddr_in addr;
+	addr.sin_family = AF_INET;
+	addr.sin_addr.s_addr = inet_addr("10.10.82.164");
+	addr.sin_port = htons(8089);
+
+	if (-1 == connect(sockfd, (struct sockaddr *) &addr, sizeof(struct sockaddr))) {
+		printf("connect failed, errno %d\n", errno);
+		exit(1);
+	}
+
+	return sockfd;
+};
+
+void mysleep(unsigned long millisec)
+{ 
+	struct timeval tv;
+	tv.tv_sec = millisec / 1000;
+	tv.tv_usec = millisec - tv.tv_sec*1000;
+	select(0, NULL, NULL, NULL, &tv);
+
+};
+
+
+int send_cmd(int c, CMD cmd, char *data, size_t data_len) 
+{
+	HEAD *h = (HEAD *) (data);
+	h->pkglen = sizeof(HEAD) + data_len;
+	h->stx = SOHU_P2P_STX;
+	h->cmd = cmd;
+	int rs = send(c, data, h->pkglen, 0);
+	return rs == h->pkglen;
+};
+
+
+void* func( void* param )
+{
+	size_t index = reinterpret_cast<size_t>(param);
+	bool use_valid_ver = false;
+	if( index >= NUM_THREAD/2 ){
+		use_valid_ver = true;
+	}
+	char buf[MAX_PKG_LEN];
+	int sockfd = g_sock_vec[ index ];
+
+
+
+	LOGIN3 *login3 = (LOGIN3 *) (buf + sizeof(HEAD));
+	
+	if( use_valid_ver ){
+		login3->cliver = 16973841;
+	}else{
+		login3->cliver = 1234;
+	}
+	login3->updatever = 0;
+	login3->lip = 0;      
+	++g_uid;
+	login3->uid = g_uid;
+	login3->osver = 0;    
+	login3->osver2 = 0;   
+	login3->starttype = index % 2;
+	login3->nat = 0;      
+	login3->chid = g_chid_arr[ index % (NUM_THREAD/2) ];
+	if(! send_cmd( sockfd, CMD_STATS_LOGIN, buf, sizeof(LOGIN3) ) ){
+		g_login3_failed_vec[index] += 1;
+	}
+
+	pthread_exit(0);
+};
+
+void connect_db( MYSQL *db )
+{
+
+	mysql_init(db);
+	if(!mysql_real_connect(db,"10.10.82.150","P2pStatus","P2pReport","pstest",3307,NULL,0)) {
+		fprintf(stderr,"Failed to connect to database: Error: %s\n", mysql_error(db));
+		exit(1);
+
+	}
+	return;
+
+};
+
+
+unsigned long long run_sql(MYSQL *db, char* statement)
+{
+
+	if(mysql_real_query(db,statement,strlen(statement)) != 0) {
+		fprintf(stderr,"Failed to query database: Error: %s\n", mysql_error(db));
+		exit(1);
+	}
+
+	MYSQL_RES* res = mysql_store_result( db );
+	if(!res) {
+		fprintf(stderr,"Failed to store result: Error: %s\n", mysql_error( db )); 
+		exit(1);
+	}
+
+	unsigned long long nrow = mysql_num_rows( res );
+
+	if(mysql_field_count( db ) <= 0) {
+		fprintf( stderr, "Field count is less or equal 0 \n" );
+		exit(1);
+	}
+
+	MYSQL_FIELD *fields = mysql_fetch_fields(res);
+	unsigned int num_fields = mysql_num_fields(res);
+
+
+
+	MYSQL_ROW row;
+	while( (row = mysql_fetch_row(res))) {
+
+		unsigned long *lengths = mysql_fetch_lengths(res);
+
+		for( size_t i=0; i<num_fields; ++i){
+			if( 0 == i ){
+				for(size_t j = 0; j < num_fields; j++) {
+					printf("%s\t", fields[j].name );
+				}
+				printf("\n");
+			}
+			printf("[%.*s] ", (int)lengths[i], row[i] ? row[i] : "NULL" );
+			if( i == num_fields - 1 ){
+				printf("\n");
+			}
+		}   
+	}
+	/*else{
+	 *     fprintf(stdout, "there is no data\n");
+	 *       }
+	 *         */
+
+	return nrow;
+};
+
+int main()
+{
+	cout << "===> Case: {test LOGIN3} start" << endl;
+	//create socket
+	for( size_t i=0; i<NUM_THREAD; ++i){
+		g_sock_vec.push_back( create_socket() );
+	}
+
+
+
+	MYSQL mysql;
+	connect_db( &mysql );
+	//size_t count = 0;
+
+	cout << "===>before sending "<<NUM_THREAD/2<< " LOGIN3 with invalid version 1234 " << endl;
+
+	for( int i=1000; i<1016; ++i ){
+		char stmt[1024];
+		memset(stmt, 0,1024);
+		sprintf(stmt, "select * from b_online where channel = %d order by id desc limit 1 " , i);
+		unsigned long long nrow = run_sql( &mysql, stmt );
+		if( nrow ){
+			cout << endl;
+		}
+	}
+	for( int i=2000; i<2016; ++i ){
+		char stmt[1024];
+		memset(stmt, 0,1024);
+		sprintf(stmt, "select * from b_online where channel = %d order by id desc limit 1 " , i);
+		unsigned long long nrow = run_sql( &mysql, stmt );
+		if( nrow ){
+			cout << endl;
+		}
+	}
+
+	char *pre_start_type_stmt = "select * from c_start_type order by c_time desc limit 1";
+	run_sql( &mysql, pre_start_type_stmt);
+	cout << endl;
+
+
+	vector<pthread_t> tids(18,-1);
+
+	for( size_t i=0; i<NUM_THREAD/2; i++ ){
+		void *p = reinterpret_cast<void*>(i);
+		pthread_create( &tids[i], NULL, func, p );
+
+	}
+
+	for( size_t i=0; i<NUM_THREAD/2; i++ ){
+		pthread_join( tids[i],NULL );
+	}
+	sleep(4);
+
+	cout << "===>after sending "<<NUM_THREAD/2<< " LOGIN3 with invalid version 1234 " << endl;;
+	for( int i=1000; i<=1016; ++i ){
+		char stmt[1024];
+		memset(stmt, 0,1024);
+		sprintf(stmt, "select * from b_online where channel = %d order by id desc limit 1 " , i);
+		unsigned long long nrow = run_sql( &mysql, stmt );
+		if( nrow ){
+			cout << endl;
+		}
+	}
+	for( int i=2000; i<=2016; ++i ){
+		char stmt[1024];
+		memset(stmt, 0,1024);
+		sprintf(stmt, "select * from b_online where channel = %d order by id desc limit 1 " , i);
+		unsigned long long nrow = run_sql( &mysql, stmt );
+		if( nrow ){
+			cout << endl;
+		}
+	}
+
+	char* cur_start_type_stmt = "select * from c_start_type order by c_time desc limit 1" ;
+	run_sql( &mysql, cur_start_type_stmt);
+	cout << endl;
+
+
+	for( size_t i=NUM_THREAD/2; i<NUM_THREAD; i++ ){
+		void *p = reinterpret_cast<void*>(i);
+		pthread_create( &tids[i], NULL, func, p );
+
+	}
+
+	for( size_t i=NUM_THREAD/2; i<NUM_THREAD; i++ ){
+		pthread_join( tids[i],NULL );
+	}
+	sleep(4);
+
+	cout << "after sending "<<NUM_THREAD<< " LOGIN3 with valid version 16973841 " << endl;
+	char* last_online_stmt = "select * from b_online order by id desc limit 1";
+	run_sql( &mysql, last_online_stmt);
+	cout << endl;
+
+	for( int i=1000; i<1016; ++i ){
+		char stmt[1024];
+		memset(stmt, 0,1024);
+		sprintf(stmt, "select * from b_online where channel = %d order by id desc limit 1 " , i);
+		unsigned long long nrow = run_sql( &mysql, stmt );
+		if( nrow ){
+			cout << endl;
+		}
+	}
+	for( int i=2000; i<2016; ++i ){
+		char stmt[1024];
+		memset(stmt, 0,1024);
+		sprintf(stmt, "select * from b_online where channel = %d order by id desc limit 1 " , i);
+		unsigned long long nrow = run_sql( &mysql, stmt );
+		if( nrow ){
+			cout << endl;
+		}
+	}
+
+	char* last_start_type_stmt = "select * from c_start_type order by c_time desc limit 1" ;
+	run_sql( &mysql, last_start_type_stmt);
+	cout << endl;
+
+	size_t num_login3_failed = 0;
+	for( size_t i=0; i<g_login3_failed_vec.size(); ++i ){
+		num_login3_failed += g_login3_failed_vec[i];
+	}
+	cout << "send login3 failed: " << num_login3_failed << endl;
+	cout << "===> Case: {test LOGIN3} end" << endl;
+
+
+
+}
+
+
+//vim: ts=2,tw=120,sw=2

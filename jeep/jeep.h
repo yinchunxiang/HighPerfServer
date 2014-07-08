@@ -1,0 +1,62 @@
+/*
+ * JEEP: Johan Efficient Event Platform
+ *
+ * jeep.h
+ *	
+ *  名称：jeep接口模块
+ *  功能：jeep高效网络处理功能的接口
+ *  
+ *  Created on: 2011-10-4
+ *      Author: feng jianhua (johan fong)
+ *        Mail: jianhuafeng@sohu-inc.com 56683216@qq.com
+ *
+ *  修改记录：
+ */
+
+#ifndef JEEP_H_
+#define JEEP_H_
+#include "jeep_global.h"
+#include "jeep_type.h"
+#include "jeep_log.h"
+#include "jeep_conn.h"
+#include "jeep_network.h"
+#include "jeep_akg.h"
+#include "jeep_util.h"
+
+extern SERVER* init_server(int port, uint16 workernum, uint32 connnum, int read_timeout, int write_timeout);
+
+extern int start_server(SERVER* server);
+
+extern inline void close_err_conn(CONN *c);
+
+/**
+ *	注册业务处理函数
+ */
+void regist_akg_func(uint32_t id, FUNC_PTR func);
+
+/**
+ *	注册接受客户端连接时响应函数
+ */
+void regist_connected_func(FUNC_PTR func);
+
+/**
+ *	注册客户端断开处理函数
+ */
+void regist_disconnected_func(FUNC_PTR func);
+
+/**
+ *	注册网络超时处理函数
+ */
+void regist_timeout_func(FUNC_PTR func);
+
+/**
+ *	注册客户端连接关闭处理函数
+ */
+void regist_closed_func(FUNC_PTR func);
+
+/**
+ *	注册网络错误处理函数
+ */
+void regist_error_func(FUNC_PTR func);
+
+#endif /* JEEP_H_ */
